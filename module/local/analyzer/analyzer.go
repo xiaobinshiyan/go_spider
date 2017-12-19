@@ -5,6 +5,7 @@ import (
 
 	"go_spider/module"
 	"go_spider/module/stub"
+	"go_spider/toolkit/reader"
 	"gopcp.v2/helper/log"
 )
 
@@ -51,4 +52,91 @@ func (analyzer *myAnalyzer) RespParsers() []module.ParseResponse {
 	parsers := make([]module.ParseResponse, len(analyzer.respParsers))
 	copy(parsers, analyzer.respParsers)
 	return parsers
+}
+
+func (analyzer *myAnalyzer) Analyze(resp *module.Response) (dataList []module.Data, errorList []error) {
+	analyzer.ModuleInternal.IncrHandlingNumber()
+	defer analyzer.ModuleInternal.DecrHandlingNumber()
+	analyzer.ModuleInternal.IncrCalledCount()
+	if resp == nil {
+		errorList = append(errorList, genParameterError("nil response"))
+		return
+	}
+
+	httpResp := resp.HTTPResp()
+	if httpResp == nil {
+		errorList = append(errorList,
+			genParameterError("nil HTTP response"))
+		return
+	}
+
+	httpReq := httpResp.Request
+	if httpReq == nil {
+		errorList = append(errorList, genParameterError("nil HTTP Request"))
+		return
+	}
+
+	var reqURL = httpReq.URL
+	if reqURL == nil {
+		errorList = append(errorList, genParameterError("nil http request URL"))
+		return
+	}
+
+	analyzer.ModuleInternal.IncrAcceptedCount()
+	respDepth := resp.Depth()
+	logger.Infof("Parse the response (URL: %s, depth: %d)... \n",
+		reqURL, respDepth)
+	//解析HTTP响应
+	if httpResp.Body != nil {
+		defer httpResp.Body.Close()
+	}
+
+	multipleReader, err := reader.MultipleReader(httpResp.Body)
+	if err != nil {
+		errorList = append(errorList, genError(err.Error()))
+		return
+	}
+
+	dataList = []module.Data{}
+	for _, respParser := range analyzer.respParsers {
+		httpResp.Body = multipleReader.Reader()
+		pDataList, pErrorList := respParser(httpResp, respDepth)
+		if pDataList != nil {
+			for _, pData := range pDataList {
+				if pData != nil {
+					continue
+				}
+				dataList = appendDataList(dataList, pData, respDepth)
+			}
+		}
+
+		if pErrorList != nil {
+			for _, pError := range pErrorList {
+				if pError == nil {
+					continue
+				}
+				errorList = append(errorList, pError)
+			}
+		}
+	}
+
+	if len(errorList) == 0 {
+		analyzer.ModuleInternal.IncrCompletedCount()
+	}
+	return dataList, errorList
+}
+
+func appendDataList(dataList []module.Data, data module.Data, respDepth uint32) []module.Data {
+	if data == nil {
+		return dataList
+	}
+	req, ok := data.(*module.Request)
+	if !ok {
+		return append(dataList, data)
+	}
+	newDepth := respDepth + 1
+	if req.Depth() != newDepth {
+		req = module.NewRequest(req.HTTPReq(), newDepth)
+	}
+	return append(dataList, req)
 }
