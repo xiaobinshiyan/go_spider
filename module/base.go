@@ -45,3 +45,17 @@ type Downloader interface {
 	Module
 	Download(req *Request) (*Response, error)
 }
+
+//Analyzer代表下载器的接口类型 并发安全
+//唯一标识自己
+type Analyzer interface {
+	Module
+	RespParsers() []ParseResponse
+	// 会根据规则分析响应并返回请求和条目。
+	// 响应需要分别经过若干响应解析函数的处理，然后合并结果。
+	Analyze(resp *Response) ([]Data, []error)
+}
+
+// 代表用于解析http响应的函数的类型
+// 目的是使用者自定义响应分析规则
+type ParseResponse func(httpResp *http.Response, respDepth uint32) ([]Data, []error)
